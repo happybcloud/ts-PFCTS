@@ -1,1 +1,107 @@
-ts_PFCTs
+%%calculate ts_PFCTs for rs-fMRI
+function tensor_function(Index)
+
+radius = 1;
+pradius = 1;
+ppatchsize = pradius*2+1;
+mradius = radius + pradius + 1; 
+patchsize = radius*2+1; %patchsize=3
+
+Base = [];
+for i=(-radius):radius  %i=(-1,1)
+    for j = (-radius):radius  %j=(-1,1)
+        for k = (-radius):radius  %k=(-1,1)
+            if i==0&&j==0&&k==0
+                continue;
+            end
+            Base = [Base [i;j;k]];
+        end
+    end
+end
+dist = sqrt(sum(Base.*Base));
+Base = Base./repmat(dist,3,1);
+
+Base6 = cell(patchsize^3-1);
+for i=1:(patchsize^3-1)
+    Base6{i} = Base(:,i)*(Base(:,i)');
+end
+
+
+% tic
+% baseFolder=['/Volumes/',Index,'/'];
+baseFolder=['y1000projects',Index,'/'];
+%mrFilename='Volume.nii';
+mrFilename='image.nii';
+
+[mrData,mrHead]=y_Read([baseFolder,mrFilename]);
+mrData(isnan(mrData)==1)=0;mrData=squeeze(mrData);
+% wc1mprage_skullstripped
+% [maskData,~]=y_Read(['mask.nii']);
+[maskData,~]=y_Read(['T12MNI_image.nii']);
+
+
+[rows,cols,depths,frames]=size(mrData);
+eigenVecMat1=zeros(rows,cols,depths,3);
+eigenVecMat2=zeros(rows,cols,depths,3);
+eigenVecMat3=zeros(rows,cols,depths,3);
+tensorMat=zeros(rows,cols,depths,6);
+eigenValueMat=zeros(rows,cols,depths,3);
+faMat=zeros(rows,cols,depths,1);
+rdMat=zeros(rows,cols,depths,1);
+mdMat=zeros(rows,cols,depths,1);
+vrMat=zeros(rows,cols,depths,1);
+% v = (-radius):radius;
+pv = (-pradius):(pradius);
+
+for row=mradius:rows-mradius
+    for col=mradius:cols-mradius
+        for depth=mradius:depths-mradius
+            if maskData(row,col,depth)>0%do tensor
+                B=zeros(frames,ppatchsize^3,patchsize^3);
+
+                for i = 1:patchsize
+                    for j = 1:patchsize
+                        for k = 1:patchsize
+                            Tmp=permute(mrData(row-radius-1+i+pv,col-radius-1+j+pv,depth-radius-1+k+pv,:),[4 3 2 1]);
+                            B(:,:,(i-1)*patchsize*patchsize+(j-1)*patchsize+k) = squeeze(reshape(Tmp,[],frames,ppatchsize^3));
+                        end
+                    end
+                end
+                MM=zeros(patchsize^3-1,1);
+                for i=1:ppatchsize^3
+                    MM = MM+abs(corr(squeeze(B(:,i,(patchsize^3+1)/2)),squeeze(B(:,i,[1:(patchsize^3-1)/2 (patchsize^3+3)/2:end]))))';                                                                                                                                                                                                          (:,i,(patchsize^3+1)/2)),squeeze(B(:,i,[1:(patchsize^3-1)/2 (patchsize^3+3)/2:end]))))';
+                end
+                MM=MM/ppatchsize^3;
+                MM(isnan(MM)) = 0;
+                
+                currMat = zeros(3,3);
+                for i=1:(patchsize^3-1)
+                    currMat = currMat + MM(i)*Base6{i}*MM(i);
+                end
+                tensorMat(row,col,depth,:)=[currMat(1),currMat(2),currMat(3),currMat(5),currMat(6),currMat(9)];
+                [coeff,latent]=pcacov(currMat);%it is equal to get eigen value for currMat'*currMat
+                if size(coeff,2)<3
+                    continue;
+                end
+                eigenVecMat1(row,col,depth,:)=coeff(:,1);
+                eigenVecMat2(row,col,depth,:)=coeff(:,2);
+                eigenVecMat3(row,col,depth,:)=coeff(:,3);
+                eigenValueMat(row,col,depth,:)=latent;
+                meanEigen=mean(latent);
+                
+                fa=sqrt(2/3*((latent(1)-meanEigen)^2+(latent(2)-meanEigen)^2+(latent(3)-meanEigen)^2)/(latent(1)^2+latent(2)^2+latent(3)^2));
+                md=meanEigen;
+                rd=(latent(2)+latent(3))/2;
+                vr=latent(1)*latent(2)*latent(3)*sqrt(meanEigen*meanEigen*meanEigen);
+                faMat(row,col,depth)=fa;
+                mdMat(row,col,depth)=md;
+                rdMat(row,col,depth)=rd;
+                vrMat(row,col,depth)=vr;
+ 
+            end
+        end
+    end
+end
+% toc
+rest_Write4DNIfTI(tensorMat,mrHead,[baseFolder,'tensor.nii']);
+%quit
